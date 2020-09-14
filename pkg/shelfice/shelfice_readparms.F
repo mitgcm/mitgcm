@@ -48,6 +48,8 @@ CEOP
      &     SHELFICEDragQuadratic, SHELFICEselectDragQuadr,
      &     SHELFICEthetaSurface,
      &     useISOMIPTD,
+     &     SHELFICEsalinity,
+     &     useISOMIPTD, no_slip_shelfice,
      &     SHELFICEconserve, SHELFICEboundaryLayer,
      &     SHI_withBL_realFWflux, SHI_withBL_uStarTopDz,
      &     SHELFICEwriteState,
@@ -58,6 +60,7 @@ CEOP
      &     SHELFICEtopoFile,
      &     SHELFICEmassFile, SHELFICEloadAnomalyFile,
      &     SHELFICEMassDynTendFile, SHELFICETransCoeffTFile,
+     &     ICEFRONTlengthFile, ICEFRONTdepthFile,
      &     SHELFICEDynMassOnly,
      &     SHELFICEadvDiffHeatFlux,
      &     SHELFICEuseGammaFrict, SHELFICE_oldCalcUStar,
@@ -102,13 +105,17 @@ C Set defaults values for parameters in SHELFICE.h
       SHELFICEloadAnomalyFile  = ' '
       SHELFICEMassDynTendFile  = ' '
       SHELFICETransCoeffTFile  = ' '
+      ICEFRONTlengthFile       = ' '
+      ICEFRONTdepthFile        = ' '
       SHELFICElatentHeat       =  334.0 _d 3
       SHELFICEHeatCapacity_Cp  = 2000.0 _d 0
       rhoShelfIce              =  917.0 _d 0
       SHELFICEheatTransCoeff   =    1.0 _d -04
       SHELFICEsaltTransCoeff   = UNSET_RL
+C--   Molecular thermal conductivity ice shelf (m^2/s)
       SHELFICEkappa            =   1.54 _d -06
       SHELFICEthetaSurface     = - 20.0 _d 0
+      SHELFICEsalinity         = 0.0 _d 0
       no_slip_shelfice         = no_slip_bottom
       SHELFICEDragLinear       = bottomDragLinear
       SHELFICEDragQuadratic    = UNSET_RL

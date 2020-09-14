@@ -26,6 +26,9 @@ C     !USES:
 C- need GRID.h to save, in rF(1), half retired param Ro_SeaLevel value:
 #include "GRID.h"
 #include "SET_GRID.h"
+#ifdef ALLOW_SHELFICE
+#include "SHELFICE_OPTIONS.h"
+#endif
 
 C     !INPUT/OUTPUT PARAMETERS:
 C     myThid :: Number of this instance of INI_PARMS
@@ -1491,10 +1494,15 @@ C     rUnit2mass: from r-coordinate to mass per unit area [kg/m2] (z:=rho;p:=1/g
          rUnit2mass = rhoConst
       ENDIF
 
+#ifndef shelfice_new_thermo
 C--   For backward compatibility, set temp_addMass and salt_addMass
 C     to temp_EvPrRn and salt_EvPrRn if not set in parameter file "data"
       IF (temp_addMass .EQ. UNSET_RL) temp_addMass = temp_EvPrRn
       IF (salt_addMass .EQ. UNSET_RL) salt_addMass = salt_EvPrRn
+#else
+      temp_addMass = UNSET_RL
+      salt_addMass = UNSET_RL
+#endif
 
 C--   Make a choice (if unset) regarding using CG2D solver min.-residual sol.
 C      for simple set-up (cartesian grid + flat bottom), default is to
