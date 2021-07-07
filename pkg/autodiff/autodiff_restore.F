@@ -85,11 +85,10 @@ c--   == end of interface ==
       IF ( debugMode ) CALL DEBUG_ENTER('AUTODIFF_RESTORE',myThid)
 #endif
 
+#ifndef AUTODIFF_USE_OLDSTORE_2D
 C--   Over all tiles
       DO bj = myByLo(myThid), myByHi(myThid)
        DO bi = myBxLo(myThid), myBxHi(myThid)
-
-#ifndef AUTODIFF_USE_OLDSTORE_2D
 C-      2D arrays
         DO J=1-OLy,sNy+OLy
          DO I=1-OLx,sNx+OLx
@@ -123,9 +122,14 @@ C-      2D arrays
 #endif
          ENDDO
         ENDDO
+       ENDDO
+      ENDDO
 #endif /* AUTODIFF_USE_OLDSTORE_2D */
 
 #ifndef AUTODIFF_USE_OLDSTORE_3D
+C--   Over all tiles
+      DO bj = myByLo(myThid), myByHi(myThid)
+       DO bi = myBxLo(myThid), myBxHi(myThid)
 C-      3D arrays
         DO K=1,Nr
          DO J=1-OLy,sNy+OLy
@@ -156,12 +160,11 @@ C-      3D arrays
           ENDDO
          ENDDO
         ENDDO
-#endif /* AUTODIFF_USE_OLDSTORE_3D */
-
        ENDDO
       ENDDO
+#endif /* AUTODIFF_USE_OLDSTORE_3D */
 
-#ifdef ALLOW_EXF
+#if ( defined ALLOW_EXF && !defined AUTODIFF_USE_OLDSTORE_EXF )
 C--   Over all tiles
       DO bj = myByLo(myThid), myByHi(myThid)
        DO bi = myBxLo(myThid), myBxHi(myThid)
@@ -305,7 +308,7 @@ C-      2D arrays
       ENDDO
 #endif /* ALLOW_EXF */
 
-#ifdef ALLOW_OBCS
+#if ( defined ALLOW_OBCS && !defined AUTODIFF_USE_OLDSTORE_OBCS )
 # ifdef ALLOW_OBCS_NORTH
 C--   Over all tiles
       DO bj = myByLo(myThid), myByHi(myThid)
@@ -455,7 +458,7 @@ C-      2D arrays
 # endif /* ALLOW_OBCS_WEST */
 #endif /* ALLOW_OBCS */
 
-#ifdef ALLOW_SEAICE
+#if ( defined ALLOW_SEAICE && !defined AUTODIFF_USE_OLDSTORE_SEAICE )
 C--   Over all tiles
       DO bj = myByLo(myThid), myByHi(myThid)
        DO bi = myBxLo(myThid), myBxHi(myThid)
