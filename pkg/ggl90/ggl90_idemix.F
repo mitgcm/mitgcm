@@ -54,31 +54,42 @@ C     myThid :: My Thread Id number
 C     !LOCAL VARIABLES :
 C     === Local variables ===
       INTEGER iMin ,iMax ,jMin ,jMax
-      INTEGER i, j, k, kp1, km1, kBottom
+      INTEGER i, j, k, kp1, km1
+      INTEGER kSrf, kTop, kBot
       INTEGER errCode
-      _RL  Nsquare(1-OLx:sNx+OLx,1-OLy:sNy+OLy,Nr)
-      _RL  deltaTggl90
       _RL  fxa,fxb,fxc,cstar
-      _RL  dfx(1-OLx:sNx+OLx,1-OLy:sNy+OLy)
-      _RL  dfy(1-OLx:sNx+OLx,1-OLy:sNy+OLy)
+      _RL  coordFac, recip_coordFac
       _RL  IDEMIX_gofx2,IDEMIX_hofx1
-      _RL  delta(1-OLx:sNx+OLx,1-OLy:sNy+OLy,Nr)
-      _RL  bN0(1-OLx:sNx+OLx,1-OLy:sNy+OLy)
-      _RL  a3d(1-OLx:sNx+OLx,1-OLy:sNy+OLy,Nr)
-      _RL  b3d(1-OLx:sNx+OLx,1-OLy:sNy+OLy,Nr)
-      _RL  c3d(1-OLx:sNx+OLx,1-OLy:sNy+OLy,Nr)
+      _RL  Nsquare    (1-OLx:sNx+OLx,1-OLy:sNy+OLy,Nr)
+      _RL  dfx        (1-OLx:sNx+OLx,1-OLy:sNy+OLy)
+      _RL  dfy        (1-OLx:sNx+OLx,1-OLy:sNy+OLy)
+      _RL  delta      (1-OLx:sNx+OLx,1-OLy:sNy+OLy,Nr)
+      _RL  bN0        (1-OLx:sNx+OLx,1-OLy:sNy+OLy)
+      _RL  a3d        (1-OLx:sNx+OLx,1-OLy:sNy+OLy,Nr)
+      _RL  b3d        (1-OLx:sNx+OLx,1-OLy:sNy+OLy,Nr)
+      _RL  c3d        (1-OLx:sNx+OLx,1-OLy:sNy+OLy,Nr)
       _RL  osborn_diff(1-OLx:sNx+OLx,1-OLy:sNy+OLy,Nr)
-      _RL  c0(1-OLx:sNx+OLx,1-OLy:sNy+OLy,Nr)
-      _RL  forc(1-OLx:sNx+OLx,1-OLy:sNy+OLy,Nr)
-      _RL  gm_forc(1-OLx:sNx+OLx,1-OLy:sNy+OLy)
+      _RL  c0         (1-OLx:sNx+OLx,1-OLy:sNy+OLy,Nr)
+      _RL  forc       (1-OLx:sNx+OLx,1-OLy:sNy+OLy,Nr)
+      _RL  gm_forc    (1-OLx:sNx+OLx,1-OLy:sNy+OLy)
 CEOP
 
       iMin = 2-OLx
       iMax = sNx+OLx-1
       jMin = 2-OLy
       jMax = sNy+OLy-1
-C     set separate time step (should be deltaTtracer)
-      deltaTggl90 = dTtracerLev(1)
+
+      IF ( usingPCoords ) THEN
+       kSrf = Nr
+       kTop = Nr
+      ELSE
+       kSrf =  1
+       kTop =  2
+      ENDIF
+
+      coordFac = 1. _d 0
+      IF ( usingPCoords) coordFac = gravity * rhoConst
+      recip_coordFac = 1./coordFac
 
 C     Initialize local fields
       DO k = 1, Nr
@@ -110,7 +121,7 @@ c-----------------------------------------------------------------------
        DO j=1-OLy,sNy+OLy
         DO i=1-OLx,sNx+OLx
          Nsquare(i,j,k) = gravity*gravitySign*recip_rhoConst
-     &                  * sigmaR(i,j,k)
+     &                  * sigmaR(i,j,k) * coordFac
          fxb = max( 1. _d -6, abs( fCori(i,j,bi,bj) ))
          Nsquare(i,j,k)= max( 100.*fxb*fxb, Nsquare(i,j,k) )
      &                 *maskC(i,j,k,bi,bj)*maskC(i,j,k-1,bi,bj)
@@ -124,7 +135,7 @@ c-----------------------------------------------------------------------
        DO j=1-OLy,sNy+OLy
         DO i=1-OLx,sNx+OLx
            bN0(i,j)=bN0(i,j)
-     &       +SQRT(Nsquare(i,j,k))*drC(k)*hFacI(i,j,k)
+     &       +SQRT(Nsquare(i,j,k))*drC(k)*recip_coordFac*hFacI(i,j,k)
         ENDDO
        ENDDO
       ENDDO
@@ -154,10 +165,10 @@ C     horizontal diffusion of IW energy can become unstable for long
 C     time steps, so limit horizontal group velocity to satisfy simple
 C     CFL-like criterion:
 C     tau_h V0**2 *dt/dx**2 < 0.25 <=> V0 < sqrt( 0.25 * dx**2/(dt*tau_h) )
-       fxa = sqrt( 1. _d 0/( deltaTggl90 * IDEMIX_tau_h ) )
        DO k=2,Nr
         DO j=1-OLy,sNy+OLy
          DO i=1-OLx,sNx+OLx
+          fxa = sqrt( 1. _d 0/( dTtracerLev(k) * IDEMIX_tau_h ) )
           fxb = 0.5*min( _dxF(i,j,bi,bj), _dyF(i,j,bi,bj) )*fxa
           IDEMIX_V0(i,j,k,bi,bj) = min( IDEMIX_V0(i,j,k,bi,bj), fxb )
          ENDDO
@@ -176,7 +187,8 @@ c     vertically integrated forcing
         DO j=1-OLy,sNy+OLy
          DO i=1-OLx,sNx+OLx
            gm_forc(i,j) = gm_forc(i,j)
-     &           +GM_EG_diss(i,j,k,bi,bj)*drF(k)*hFacC(i,j,k,bi,bj)
+     &         +GM_EG_diss(i,j,k,bi,bj)
+     &         *drF(k)*recip_coordFac*hFacC(i,j,k,bi,bj)
          ENDDO
         ENDDO
        ENDDO
@@ -186,7 +198,7 @@ c     vertically integrated forcing
          DO i=1-OLx,sNx+OLx
            gm_forc(i,j) = gm_forc(i,j)
      &              +max( 0. _d 0,Kwz(i,j,k,bi,bj)*Nsquare(i,j,k) )
-     &               *drC(k)*hFacI(i,j,k)
+     &               *drC(k)*recip_coordFac*hFacI(i,j,k)
          ENDDO
         ENDDO
        ENDDO
@@ -221,10 +233,14 @@ c      inject locally
 c      inject at bottom box only
        DO j=1-OLy,sNy+OLy
         DO i=1-OLx,sNx+OLx
-         kBottom   = MAX(kLowC(i,j,bi,bj),1)
-         forc(i,j,kbottom)=forc(i,j,kbottom)
-     &     + gm_forc(i,j)*recip_drC(kbottom)
-     &                  *recip_hFacI(i,j,kbottom)
+         IF ( usingPCoords ) THEN
+          kBot=MIN(kSurfC(i,j,bi,bj)+1,Nr)
+         ELSE
+          kBot   = MAX(kLowC(i,j,bi,bj),1)
+         ENDIF
+         forc(i,j,kBot)=forc(i,j,kBot)
+     &     + gm_forc(i,j)*recip_drC(kBot)*coordFac
+     &                  *recip_hFacI(i,j,kBot)
         ENDDO
        ENDDO
       endif
@@ -272,7 +288,7 @@ c-----------------------------------------------------------------------
         DO j=jMin,jMax
          DO i=iMin,iMax
           IDEMIX_E(i,j,k,bi,bj) = IDEMIX_E(i,j,k,bi,bj)
-     &       + deltaTggl90*(-recip_drC(k)*recip_rA(i,j,bi,bj)
+     &       + dTtracerLev(k)*(-recip_drC(k)*recip_rA(i,j,bi,bj)
      &                   *recip_hFacI(i,j,k)
      &         *((dfx(i+1,j)-dfx(i,j))+(dfy(i,j+1)-dfy(i,j)) )  )
      &         *maskC(i,j,k,bi,bj) ! paranoia setting
@@ -286,7 +302,7 @@ c-----------------------------------------------------------------------
        DO j=jMin,jMax
         DO i=iMin,iMax
           IDEMIX_E(i,j,k,bi,bj) = IDEMIX_E(i,j,k,bi,bj)
-     &                      + forc(i,j,k)*deltaTggl90
+     &                      + forc(i,j,k)*dTtracerLev(k)
         ENDDO
        ENDDO
       ENDDO
@@ -295,128 +311,150 @@ c      solve vertical diffusion implicitly
 c-----------------------------------------------------------------------
 
 C     delta_k = dt tau_v /drF_k (c_k+c_k+1)/2
+C     delta(1) and delta(Nr) are zero by initialisation
       DO k=2,Nr-1
        DO j=jMin,jMax
         DO i=iMin,iMax
-         delta(i,j,k)  = deltaTggl90*IDEMIX_tau_v
-     &                  *recip_drF(k)*recip_hFacC(i,j,k,bi,bj)
-     &                  *.5 _d 0*(c0(i,j,k)+c0(i,j,k+1))
+         delta(i,j,k)  = dTtracerLev(k)*IDEMIX_tau_v
+     &        *recip_drF(k)*coordFac*recip_hFacC(i,j,k,bi,bj)
+     &        *.5 _d 0*(c0(i,j,k)+c0(i,j,k+1))
         ENDDO
        ENDDO
       ENDDO
-      DO j=jMin,jMax
-       DO i=iMin,iMax
-         delta(i,j,1)  = 0. _d 0
-         delta(i,j,Nr) = 0. _d 0
-         kBottom   = MAX(kLowC(i,j,bi,bj),1)
-         delta(i,j,kBottom) = 0. _d 0
+      IF ( usingPCoords ) THEN
+       DO j=jMin,jMax
+        DO i=iMin,iMax
+         kBot = MIN(kSurfC(i,j,bi,bj),Nr)
+         delta(i,j,kBot) = 0. _d 0
+        ENDDO
        ENDDO
-      ENDDO
+      ELSE
+       DO j=jMin,jMax
+        DO i=iMin,iMax
+         kBot = MAX(kLowC(i,j,bi,bj),1)
+         delta(i,j,kBot) = 0. _d 0
+        ENDDO
+       ENDDO
+      ENDIF
 
 C--   Lower diagonal  for E_(k-1) : -delta_k-1 c_k-1/drC_k
-      DO j=jMin,jMax
-       DO i=iMin,iMax
-         a3d(i,j,1) = 0. _d 0
-         a3d(i,j,2) = 0. _d 0
-       ENDDO
-      ENDDO
-      DO k=3,Nr
-       km1=MAX(2,k-1)
+C     but leaving the contribution of c0_k-1 for later
+      DO k=2,Nr
+       km1=MAX(k-1,2)
        DO j=jMin,jMax
         DO i=iMin,iMax
 C-       No need for maskC(k-1) with recip_hFacC(k-1) in delta(k-1)
-         a3d(i,j,k) = -delta(i,j,k-1)*c0(i,j,km1)
-     &        *recip_drC(k)*recip_hFacI(i,j,k)
-     &        *maskC(i,j,k,bi,bj)!*maskC(i,j,km1,bi,bj)
+         a3d(i,j,k) = -delta(i,j,km1)
+     &        *recip_drC(k)*coordFac*recip_hFacI(i,j,k)
+     &        *maskC(i,j,k,bi,bj)
         ENDDO
        ENDDO
       ENDDO
 
 C--   Upper diagonal for E_(k+1):  delta_k c_k+1/drC_k
+C     but leaving the contribution of c0_k+1 for later
       DO k=2,Nr
        DO j=jMin,jMax
         DO i=iMin,iMax
 C-       No need for maskC(k) with recip_hFacC(k) in delta(k)
-         kp1=MAX(1,MIN(klowC(i,j,bi,bj),k+1))
-         c3d(i,j,k) = -delta(i,j,k)*c0(i,j,kp1)
-     &        *recip_drC(k)*recip_hFacI(i,j,k)
+         c3d(i,j,k) = -delta(i,j,k)
+     &        *recip_drC(k)*coordFac*recip_hFacI(i,j,k)
      &        *maskC(i,j,k-1,bi,bj)
-!     &        *maskC(i,j,k,bi,bj)*maskC(i,j,kp1,bi,bj)
         ENDDO
        ENDDO
       ENDDO
-      DO j=jMin,jMax ! c3d at bottom is zero
+
+C     treat bottom and surface boundaries for coeffients
+C     of upper and lower diagonal by masking
+      kp1=MIN(2,Nr)
+      IF ( usingPCoords ) THEN
+       DO j=jMin,jMax
+        DO i=iMin,iMax
+C     a3d at bottom is zero
+         kBot=MIN(kSurfC(i,j,bi,bj)+1,Nr)
+         a3d(i,j,kBot) = 0. _d 0
+C     for p-coords, c3d is zero at the surface, too
+         c3d(i,j,Nr)      = 0. _d 0
+        ENDDO
+       ENDDO
+      ELSEIF ( usingZCoords ) THEN
+       DO j=jMin,jMax
+        DO i=iMin,iMax
+C     c3d at bottom is zero
+         kBot = MAX(kLowC(i,j,bi,bj),1)
+         c3d(i,j,kBot) = 0. _d 0
+C     for z-coords, a3d is zero at the surface (level 2), too
+         a3d(i,j,kp1)     = 0. _d 0
+        ENDDO
+       ENDDO
+      ENDIF
+C     For k=1 there is nothing to solve for
+      DO j=jMin,jMax
        DO i=iMin,iMax
-         c3d(i,j,1) = 0. _d 0
-         kBottom   = MAX(kLowC(i,j,bi,bj),1)
-         c3d(i,j,kBottom) = 0. _d 0
+C     so that both off-diagonal coefficients are zero
+        a3d(i,j,1) = 0. _d 0
+        c3d(i,j,1) = 0. _d 0
+C     and the main diagonal is one (for stability)
+        b3d(i,j,1) = 1. _d 0
        ENDDO
       ENDDO
 
 C--   Center diagonal
-      DO j=jMin,jMax
-       DO i=iMin,iMax
-         b3d(i,j,1) = 1. _d 0
-       ENDDO
-      ENDDO
       DO k=2,Nr
-       km1 = MAX(k-1,2)
        DO j=jMin,jMax
         DO i=iMin,iMax
-          b3d(i,j,k) = 1. _d 0 + deltaTggl90*IDEMIX_tau_d(i,j,k,bi,bj)
+         b3d(i,j,k) = 1. _d 0+dTtracerLev(k)*IDEMIX_tau_d(i,j,k,bi,bj)
      &         *IDEMIX_E(i,j,k,bi,bj)
-     &         *maskC(i,j,k,bi,bj)*maskC(i,j,km1,bi,bj)
-C-       No need for maskC(k) with recip_hFacC(k) in delta(k)
-          b3d(i,j,k) = b3d(i,j,k) + delta(i,j,k)*c0(i,j,k)
-     &        *recip_drC(k)*recip_hFacI(i,j,k)
-     &        *maskC(i,j,km1,bi,bj)
-C-       No need for maskC(k-1) with recip_hFacC(k-1) in delta(k-1)
-          b3d(i,j,k) = b3d(i,j,k) + delta(i,j,km1)*c0(i,j,k)
-     &        *recip_drC(k)*recip_hFacI(i,j,k)
-     &         *maskC(i,j,k,bi,bj)
-         ENDDO
+     &         *maskC(i,j,k,bi,bj)*maskC(i,j,k-1,bi,bj)
+     &        - ( a3d(i,j,k) + c3d(i,j,k) ) * c0(i,j,k)
+        ENDDO
        ENDDO
       ENDDO
 
-c     at surface and bottom
+C--   Complete computation of lower and upper diagonal after they have
+C     been used for the center diagonal: add the contribution of c0_k+/-1
+      DO k=2,Nr
+       kp1=MIN(k+1,Nr)
+       km1=MAX(k-1,2)
+       DO j=jMin,jMax
+        DO i=iMin,iMax
+         IF ( usingZCoords ) kp1=MAX(1,MIN(klowC(i,j,bi,bj),k+1))
+         a3d(i,j,k) = a3d(i,j,k)*c0(i,j,km1)
+         c3d(i,j,k) = c3d(i,j,k)*c0(i,j,kp1)
+        ENDDO
+       ENDDO
+      ENDDO
+
+C--   Apply flux boundary condition
       DO j=jMin,jMax
        DO i=iMin,iMax
-        k   = MAX(kLowC(i,j,bi,bj),1)
-        km1 = MAX(k-1,2)
-        b3d(i,j,k) =  1. _d 0  + deltaTggl90*IDEMIX_tau_d(i,j,k,bi,bj)
-     &          *IDEMIX_E(i,j,k,bi,bj)
-     &          *maskC(i,j,k,bi,bj)*maskC(i,j,km1,bi,bj)
-C-       No need for maskC(k-1) with recip_hFacC(k-1) in delta(k-1)
-     &        + delta(i,j,km1 )*c0(i,j,k)
-     &          *recip_drC(k)*recip_hFacI(i,j,k)
-     &          *maskC(i,j,k,bi,bj)
-        k=2
-        b3d(i,j,k) = 1. _d 0 + deltaTggl90*IDEMIX_tau_d(i,j,k,bi,bj)
-     &          *IDEMIX_E(i,j,k,bi,bj)
-     &          *maskC(i,j,k,bi,bj)*maskC(i,j,km1,bi,bj)
-C-       No need for maskC(k) with recip_hFacC(k) in delta(k)
-     &        + delta(i,j,k)*c0(i,j,k)
-     &          *recip_drC(k)*recip_hFacI(i,j,k)
-     &          *maskC(i,j,km1,bi,bj)
-
+        IDEMIX_E(i,j,kTop,bi,bj) = IDEMIX_E(i,j,kTop,bi,bj)
+     &       +dTtracerLev(kTop)*IDEMIX_F_s(i,j,bi,bj)
+     &       *recip_drC(kTop)*coordFac*recip_hFacI(i,j,kTop)
+     &       *maskC(i,j,kTop,bi,bj)
        ENDDO
       ENDDO
-
-C     Apply flux boundary condition
-      DO j=jMin,jMax
-       DO i=iMin,iMax
-        k=2
-        IDEMIX_E(i,j,k,bi,bj)  =  IDEMIX_E(i,j,k,bi,bj)
-     &      +deltaTggl90*IDEMIX_F_s(i,j,bi,bj)
-     &        *recip_drC(k)*recip_hFacI(i,j,k)
-     &        *maskC(i,j,k,bi,bj)
-        k = MAX(kLowC(i,j,bi,bj),1)
-        IDEMIX_E(i,j,k,bi,bj) = IDEMIX_E(i,j,k,bi,bj)
-     &    -deltaTggl90*IDEMIX_F_b(i,j,bi,bj)
-     &     *recip_drC(k)*recip_hFacI(i,j,k)
-     &     *maskC(i,j,k,bi,bj)
+      IF ( usingZCoords) THEN
+       DO j=jMin,jMax
+        DO i=iMin,iMax
+         kBot = MAX(kLowC(i,j,bi,bj),1)
+         IDEMIX_E(i,j,kBot,bi,bj) = IDEMIX_E(i,j,kBot,bi,bj)
+     &        -dTtracerLev(kBot)*IDEMIX_F_b(i,j,bi,bj)
+     &        *recip_drC(kBot)*coordFac*recip_hFacI(i,j,kBot)
+     &        *maskC(i,j,kBot,bi,bj)
+        ENDDO
        ENDDO
-      ENDDO
+      ELSEIF ( usingPCoords ) THEN
+       DO j=jMin,jMax
+        DO i=iMin,iMax
+         kBot = MIN(kSurfC(i,j,bi,bj)+1,Nr)
+         IDEMIX_E(i,j,kBot,bi,bj) = IDEMIX_E(i,j,kBot,bi,bj)
+     &        -dTtracerLev(kBot)*IDEMIX_F_b(i,j,bi,bj)
+     &        *recip_drC(kBot)*coordFac*recip_hFacI(i,j,kBot)
+     &        *maskC(i,j,kBot,bi,bj)
+        ENDDO
+       ENDDO
+      ENDIF
 
 C     solve tri-diagonal system
       errCode = -1

@@ -89,6 +89,7 @@ CEOP
 
 C--   set surface level index:
       ks = 1
+      IF ( usingPCoords ) ks = Nr
 
       DO bj = myByLo(myThid),myByHi(myThid)
        DO bi = myBxLo(myThid),myBxHi(myThid)

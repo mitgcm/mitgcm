@@ -61,7 +61,7 @@ C !LOCAL VARIABLES: ====================================================
 C Local constants
 C     iMin,iMax,jMin,jMax :: index boundaries of computation domain
 C     i, j, k, kp1,km1 :: array computation indices
-C     kSurf, kBottom   :: vertical indices of domain boundaries
+C     kSrf, kBottom    :: vertical indices of domain boundaries
 C     hFac/hFacI       :: fractional thickness of W-cell
 C     explDissFac      :: explicit Dissipation Factor (in [0-1])
 C     implDissFac      :: implicit Dissipation Factor (in [0-1])
@@ -78,15 +78,14 @@ C         rMixingLength:: inverse of mixing length
 C     totalDepth       :: thickness of water column (inverse of recip_Rcol)
 C     TKEPrandtlNumber :: here, an empirical function of the Richardson number
       INTEGER iMin ,iMax ,jMin ,jMax
-      INTEGER i, j, k, kp1, km1, kSurf, kBottom
+      INTEGER i, j, k, kp1, km1, kSrf, kBottom, kTop, kBot, kDir, delK
       _RL     explDissFac, implDissFac
-      _RL     uStarSquare
+      _RL     uStarSquare(1-OLx:sNx+OLx,1-OLy:sNy+OLy)
       _RL     verticalShear(1-OLx:sNx+OLx,1-OLy:sNy+OLy)
       _RL     KappaM(1-OLx:sNx+OLx,1-OLy:sNy+OLy)
       _RL     KappaH
 c     _RL     Nsquare
       _RL     Nsquare(1-OLx:sNx+OLx,1-OLy:sNy+OLy,Nr)
-      _RL     deltaTggl90
 c     _RL     SQRTTKE
       _RL     SQRTTKE(1-OLx:sNx+OLx,1-OLy:sNy+OLy,Nr)
       _RL     RiNumber
@@ -130,10 +129,14 @@ C     gTKE     :: right hand side of diffusion equation
 #ifdef ALLOW_GGL90_SMOOTH
       _RL p4, p8, p16
 #endif
+C     This mixed layer model is not invariant under coordinate
+C     transformation to pressure coordinates, so we need these
+C     factors to scale the vertical (pressure) coordinates
+      _RL     coordFac, recip_coordFac
 #ifdef ALLOW_AUTODIFF_TAMC
       INTEGER act1, act2, act3, act4
       INTEGER max1, max2, max3
-      INTEGER ikeyLoc
+      INTEGER ikeyLoc, kkeyLoc
 #endif
 CEOP
 
@@ -144,6 +147,24 @@ CEOP
       p8  = 0.125  _d 0
       p16 = 0.0625 _d 0
 #endif
+
+      IF ( usingPCoords ) THEN
+       kSrf = Nr
+       kTop = Nr
+       kBot =  2
+       kDir = -1
+       delK =  1
+      ELSE
+       kSrf =  1
+       kTop =  2
+       kBot = Nr
+       kDir =  1
+       delK =  0
+      ENDIF
+
+      coordFac = 1. _d 0
+      IF ( usingPCoords) coordFac = gravity * rhoConst
+      recip_coordFac = 1./coordFac
 
 #ifdef ALLOW_AUTODIFF_TAMC
       act1 = bi - myBxLo(myThid)
@@ -158,10 +179,6 @@ CEOP
      &                     + act4*max1*max2*max3
 #endif /* ALLOW_AUTODIFF_TAMC */
 
-C     set separate time step (should be deltaTtracer)
-      deltaTggl90 = dTtracerLev(1)
-
-      kSurf = 1
 C     explicit/implicit timestepping weights for dissipation
       explDissFac = 0. _d 0
       implDissFac = 1. _d 0 - explDissFac
@@ -187,7 +204,7 @@ C     case of using IDEMIX.
        ENDDO
 
 C     Initialize local fields
-      DO k = 1, Nr
+      DO k=1,Nr
        DO j=1-OLy,sNy+OLy
         DO i=1-OLx,sNx+OLx
          rMixingLength(i,j,k)     = 0. _d 0
@@ -213,10 +230,11 @@ CADJ STORE GGL90TKE(:,:,:,bi,bj)=comlev1_bibj, key=ikeyLoc, kind=isbyte
       DO j=1-OLy,sNy+OLy
        DO i=1-OLx,sNx+OLx
         KappaM(i,j)        = 0. _d 0
+        uStarSquare(i,j)   = 0. _d 0
         verticalShear(i,j) = 0. _d 0
         totalDepth(i,j)    = Ro_surf(i,j,bi,bj) - R_low(i,j,bi,bj)
-        rMixingLength(i,j,1) = 0. _d 0
-        mxLength_Dn(i,j,1) = GGL90mixingLengthMin
+        rMixingLength(i,j,1)  = 0. _d 0
+        mxLength_Dn(i,j,kSrf) = GGL90mixingLengthMin
 #ifdef ALLOW_AUTODIFF
         IF (maskC(i,j,1,bi,bj).GT.0) THEN
 #endif
@@ -256,27 +274,32 @@ CADJ STORE GGL90TKE(:,:,:,bi,bj)=comlev1_bibj, key=ikeyLoc, kind=isbyte
 
 C     buoyancy frequency
          Nsquare(i,j,k) = gravity*gravitySign*recip_rhoConst
-     &                  * sigmaR(i,j,k)
+     &                  * sigmaR(i,j,k) * coordFac
 C     vertical shear term (dU/dz)^2+(dV/dz)^2 is computed later
 C     to save some memory
 C     mixing length
          GGL90mixingLength(i,j,k) = SQRTTWO *
      &        SQRTTKE(i,j,k)/SQRT( MAX(Nsquare(i,j,k),GGL90eps) )
+     &        * maskC(i,j,k,bi,bj)*maskC(i,j,k-1,bi,bj)
         ENDDO
        ENDDO
       ENDDO
 
 C- ensure mixing between first and second level
       IF (mxlSurfFlag) THEN
+       IF ( usingPCoords ) THEN
+        kp1 = Nr
+       ELSE
+        kp1 = MIN(2,Nr)
+       ENDIF
        DO j=jMin,jMax
         DO i=iMin,iMax
-         GGL90mixingLength(i,j,2)=drF(1)
+         GGL90mixingLength(i,j,kp1)=drF(kSrf)*recip_coordFac
         ENDDO
        ENDDO
       ENDIF
 
 C--   Impose upper and lower bound for mixing length
-C--   Impose minimum mixing length to avoid division by zero
       IF ( mxlMaxFlag .EQ. 0 ) THEN
 
 #ifdef ALLOW_AUTODIFF
@@ -290,9 +313,10 @@ C--   Impose minimum mixing length to avoid division by zero
        DO k=2,Nr
         DO j=jMin,jMax
          DO i=iMin,iMax
-          MaxLength=totalDepth(i,j)
+          MaxLength=totalDepth(i,j)*recip_coordFac
           GGL90mixingLength(i,j,k) = MIN(GGL90mixingLength(i,j,k),
      &                                   MaxLength)
+#ifdef ALLOW_AUTODIFF
          ENDDO
         ENDDO
        ENDDO
@@ -300,6 +324,7 @@ C--   Impose minimum mixing length to avoid division by zero
        DO k=2,Nr
         DO j=jMin,jMax
          DO i=iMin,iMax
+#endif
           GGL90mixingLength(i,j,k) = MAX(GGL90mixingLength(i,j,k),
      &                                   GGL90mixingLengthMin)
 #ifdef ALLOW_AUTODIFF
@@ -329,6 +354,7 @@ C--   Impose minimum mixing length to avoid division by zero
         DO j=jMin,jMax
          DO i=iMin,iMax
           MaxLength=MIN(Ro_surf(i,j,bi,bj)-rF(k),rF(k)-R_low(i,j,bi,bj))
+     &         * recip_coordFac
 c         MaxLength=MAX(MaxLength,20. _d 0)
           GGL90mixingLength(i,j,k) = MIN(GGL90mixingLength(i,j,k),
      &                                   MaxLength)
@@ -364,25 +390,38 @@ c         MaxLength=MAX(MaxLength,20. _d 0)
         ENDDO
        ENDDO
 #endif
-       DO k=2,Nr
+       DO k=kTop,kBot,kDir
+        km1 = MIN(k-kDir,Nr)
+#ifdef ALLOW_AUTODIFF_TAMC
+        kkeyLoc = (ikeyLoc-1)*Nr + k
+CADJ STORE GGL90mixingLength(:,:,km1)
+CADJ &     = comlev1_bibj_k, key = kkeyLoc, kind=isbyte
+#endif /* ALLOW_AUTODIFF_TAMC */
         DO j=jMin,jMax
          DO i=iMin,iMax
           GGL90mixingLength(i,j,k) = MIN(GGL90mixingLength(i,j,k),
-     &        GGL90mixingLength(i,j,k-1)+drF(k-1))
+     &        GGL90mixingLength(i,j,km1)+drF(km1)*recip_coordFac)
          ENDDO
         ENDDO
        ENDDO
+       k=kBot
        DO j=jMin,jMax
         DO i=iMin,iMax
-          GGL90mixingLength(i,j,Nr) = MIN(GGL90mixingLength(i,j,Nr),
-     &       GGL90mixingLengthMin+drF(Nr))
+         GGL90mixingLength(i,j,k) = MIN(GGL90mixingLength(i,j,k),
+     &        GGL90mixingLengthMin+drF(k-delK)*recip_coordFac)
         ENDDO
        ENDDO
-       DO k=Nr-1,2,-1
+       DO k=kBot-kDir,kTop,-kDir
+        kp1 = k+kDir
+#ifdef ALLOW_AUTODIFF_TAMC
+        kkeyLoc = (ikeyLoc-1)*Nr + k
+CADJ STORE GGL90mixingLength(:,:,kp1)
+CADJ &     = comlev1_bibj_k, key = kkeyLoc, kind=isbyte
+#endif /* ALLOW_AUTODIFF_TAMC */
         DO j=jMin,jMax
          DO i=iMin,iMax
           GGL90mixingLength(i,j,k) = MIN(GGL90mixingLength(i,j,k),
-     &        GGL90mixingLength(i,j,k+1)+drF(k))
+     &        GGL90mixingLength(i,j,kp1)+drF(k)*recip_coordFac)
          ENDDO
         ENDDO
        ENDDO
@@ -416,25 +455,38 @@ c         MaxLength=MAX(MaxLength,20. _d 0)
         ENDDO
        ENDDO
 #endif
-       DO k=2,Nr
+       DO k=kTop,kBot,kDir
+        km1 = MIN(k-kDir,Nr)
+#ifdef ALLOW_AUTODIFF_TAMC
+        kkeyLoc = (ikeyLoc-1)*Nr + k
+CADJ STORE mxLength_Dn(:,:,km1)
+CADJ &     = comlev1_bibj_k, key = kkeyLoc, kind=isbyte
+#endif /* ALLOW_AUTODIFF_TAMC */
         DO j=jMin,jMax
          DO i=iMin,iMax
           mxLength_Dn(i,j,k) = MIN(GGL90mixingLength(i,j,k),
-     &        mxLength_Dn(i,j,k-1)+drF(k-1))
+     &        mxLength_Dn(i,j,km1)+drF(km1)*recip_coordFac)
          ENDDO
         ENDDO
        ENDDO
+       k=kBot
        DO j=jMin,jMax
         DO i=iMin,iMax
-          GGL90mixingLength(i,j,Nr) = MIN(GGL90mixingLength(i,j,Nr),
-     &       GGL90mixingLengthMin+drF(Nr))
+          GGL90mixingLength(i,j,k) = MIN(GGL90mixingLength(i,j,k),
+     &       GGL90mixingLengthMin+drF(k-delK)*recip_coordFac)
         ENDDO
        ENDDO
-       DO k=Nr-1,2,-1
+       DO k=kBot-kDir,kTop,-kDir
+        kp1 = k+kDir
+#ifdef ALLOW_AUTODIFF_TAMC
+        kkeyLoc = (ikeyLoc-1)*Nr + k
+CADJ STORE GGL90mixingLength(:,:,kp1)
+CADJ &     = comlev1_bibj_k, key = kkeyLoc, kind=isbyte
+#endif /* ALLOW_AUTODIFF_TAMC */
         DO j=jMin,jMax
          DO i=iMin,iMax
           GGL90mixingLength(i,j,k) = MIN(GGL90mixingLength(i,j,k),
-     &        GGL90mixingLength(i,j,k+1)+drF(k))
+     &        GGL90mixingLength(i,j,kp1)+drF(k-delK)*recip_coordFac)
          ENDDO
         ENDDO
        ENDDO
@@ -461,6 +513,31 @@ c         MaxLength=MAX(MaxLength,20. _d 0)
 
       ELSE
        STOP 'GGL90_CALC: Wrong mxlMaxFlag (mixing length limit)'
+      ENDIF
+C--   Impose minimum mixing length to avoid division by zero
+C     and compute inverse
+      IF ( mxlMaxFlag.NE.3 ) THEN
+C     for mxlMaxFlag=3, this has already been done
+#ifdef ALLOW_AUTODIFF_TAMC
+CADJ STORE GGL90mixingLength = comlev1_bibj, key=ikeyLoc, kind=isbyte
+#endif
+       DO k=2,Nr
+        DO j=jMin,jMax
+         DO i=iMin,iMax
+          GGL90mixingLength(i,j,k) = MAX(GGL90mixingLength(i,j,k),
+     &                                   GGL90mixingLengthMin)
+#ifdef ALLOW_AUTODIFF
+         ENDDO
+        ENDDO
+       ENDDO
+       DO k=2,Nr
+        DO j=jMin,jMax
+         DO i=iMin,iMax
+#endif
+          rMixingLength(i,j,k) = 1. _d 0 / GGL90mixingLength(i,j,k)
+         ENDDO
+        ENDDO
+       ENDDO
       ENDIF
 
 C     start "proper" k-loop (the code above was moved out and up to
@@ -527,11 +604,14 @@ C     viscosity and diffusivity
        DO j=jMin,jMax
         DO i=iMin,iMax
          KappaM(i,j) = GGL90ck*GGL90mixingLength(i,j,k)*SQRTTKE(i,j,k)
-         GGL90visctmp(i,j,k) = MAX(KappaM(i,j),diffKrNrS(k))
-     &                            * maskC(i,j,k,bi,bj)
+         GGL90visctmp(i,j,k) = MAX( KappaM(i,j),diffKrNrS(k)
+     &                            * recip_coordFac*recip_coordFac )
+     &        * maskC(i,j,k,bi,bj)*maskC(i,j,k-1,bi,bj)
 C        note: storing GGL90visctmp like this, and using it later to compute
 C              GGL9rdiffKr etc. is robust in case of smoothing (e.g. see OPA)
-         KappaM(i,j) = MAX(KappaM(i,j),viscArNr(k)) * maskC(i,j,k,bi,bj)
+         KappaM(i,j) = MAX( KappaM(i,j),viscArNr(k)
+     &                    * recip_coordFac*recip_coordFac )
+     &                    * maskC(i,j,k,bi,bj)*maskC(i,j,k-1,bi,bj)
         ENDDO
        ENDDO
 
@@ -548,6 +628,7 @@ C     by averaging (@ grid-cell center) the 4 vertical shear compon @ U,V pos.
      &                 ( tempU*tempU + tempUp*tempUp )*halfRL
      &               + ( tempV*tempV + tempVp*tempVp )*halfRL
      &                         )*recip_drC(k)*recip_drC(k)
+     &                          *coordFac*coordFac
          ENDDO
         ENDDO
        ELSE
@@ -557,9 +638,11 @@ C     from the averaged flow at grid-cell center (2 compon x 2 pos.)
           tempU = ( ( uVel(i,j,km1,bi,bj) + uVel(i+1,j,km1,bi,bj) )
      &             -( uVel(i,j,k  ,bi,bj) + uVel(i+1,j,k  ,bi,bj) )
      &            )*halfRL*recip_drC(k)
+     &             *coordFac
           tempV = ( ( vVel(i,j,km1,bi,bj) + vVel(i,j+1,km1,bi,bj) )
      &             -( vVel(i,j,k  ,bi,bj) + vVel(i,j+1,k  ,bi,bj) )
      &            )*halfRL*recip_drC(k)
+     &             *coordFac
           verticalShear(i,j) = tempU*tempU + tempV*tempV
          ENDDO
         ENDDO
@@ -602,7 +685,8 @@ CML         IDEMIX_RiNumber = 1./GGL90eps
         DO i=iMin,iMax
 C        diffusivity
          KappaH = KappaM(i,j)/TKEPrandtlNumber(i,j,k)
-         KappaE(i,j,k) = GGL90alpha * KappaM(i,j) * maskC(i,j,k,bi,bj)
+         KappaE(i,j,k) = GGL90alpha * KappaM(i,j)
+     &        * maskC(i,j,k,bi,bj)*maskC(i,j,k-1,bi,bj)
 
 C     dissipation term
          TKEdissipation = explDissFac*GGL90ceps
@@ -610,7 +694,7 @@ C     dissipation term
      &        *GGL90TKE(i,j,k,bi,bj)
 C     partial update with sum of explicit contributions
          GGL90TKE(i,j,k,bi,bj) = GGL90TKE(i,j,k,bi,bj)
-     &        + deltaTggl90*(
+     &        + dTtracerLev(k)*(
      &        + KappaM(i,j)*verticalShear(i,j)
      &        - KappaH*Nsquare(i,j,k)
      &        - TKEdissipation
@@ -624,7 +708,7 @@ C     add IDEMIX contribution to the turbulent kinetic energy
         DO j=jMin,jMax
          DO i=iMin,iMax
           GGL90TKE(i,j,k,bi,bj) = GGL90TKE(i,j,k,bi,bj)
-     &         + deltaTggl90*(
+     &         + dTtracerLev(k)*(
      &         + IDEMIX_tau_d(i,j,k,bi,bj)*IDEMIX_E(i,j,k,bi,bj)**2
      &         )
          ENDDO
@@ -638,7 +722,7 @@ C--    Add horiz. diffusion tendency
         DO j=jMin,jMax
          DO i=iMin,iMax
           GGL90TKE(i,j,k,bi,bj) = GGL90TKE(i,j,k,bi,bj)
-     &                          + gTKE(i,j)*deltaTggl90
+     &                          + gTKE(i,j)*dTtracerLev(k)
          ENDDO
         ENDDO
        ENDIF
@@ -646,11 +730,21 @@ C--    Add horiz. diffusion tendency
 
 C--   end of k loop
       ENDDO
+      IF ( usingPCoords ) THEN
+C     impose TKE(1) = 0.
+       DO j=jMin,jMax
+        DO i=iMin,iMax
+         GGL90TKE(i,j,1,bi,bj) = 0. _d 0
+        ENDDO
+       ENDDO
+      ENDIF
 
-C     ============================================
+C     ==============================================
 C     Implicit time step to update TKE for k=1,Nr;
-C     TKE(Nr+1)=0 by default
-C     ============================================
+C     TKE(Nr+1)=0 by default;
+C     for pressure coordinates, this translates into
+C     TKE(1)  = 0, TKE(Nr+1) is the surface value
+C     ==============================================
 C     set up matrix
 C--   Lower diagonal
       DO j=jMin,jMax
@@ -662,13 +756,15 @@ C--   Lower diagonal
        km1=MAX(2,k-1)
        DO j=jMin,jMax
         DO i=iMin,iMax
+         IF ( usingPCoords) km1=MIN(Nr,MAX(kSurfC(i,j,bi,bj),k-1))
 C-    We keep recip_hFacC in the diffusive flux calculation,
 C-    but no hFacC in TKE volume control
 C-    No need for maskC(k-1) with recip_hFacC(k-1)
-         a3d(i,j,k) = -deltaTggl90
+         a3d(i,j,k) = -dTtracerLev(k)
      &        *recip_drF(k-1)*recip_hFacC(i,j,k-1,bi,bj)
      &        *.5 _d 0*(KappaE(i,j, k )+KappaE(i,j,km1))
      &        *recip_drC(k)*maskC(i,j,k,bi,bj)
+     &        *coordFac*coordFac
         ENDDO
        ENDDO
       ENDDO
@@ -679,16 +775,18 @@ C--   Upper diagonal
        ENDDO
       ENDDO
       DO k=2,Nr
+       kp1=MIN(k+1,Nr)
        DO j=jMin,jMax
         DO i=iMin,iMax
-         kp1=MAX(1,MIN(klowC(i,j,bi,bj),k+1))
+         IF ( usingZCoords ) kp1=MAX(1,MIN(klowC(i,j,bi,bj),k+1))
 C-    We keep recip_hFacC in the diffusive flux calculation,
 C-    but no hFacC in TKE volume control
 C-    No need for maskC(k) with recip_hFacC(k)
-         c3d(i,j,k) = -deltaTggl90
-     &        *recip_drF( k ) * recip_hFacC(i,j,k,bi,bj)
-     &        *.5 _d 0*(KappaE(i,j,k)+KappaE(i,j,kp1))
-     &        *recip_drC(k)*maskC(i,j,k-1,bi,bj)
+         c3d(i,j,k) = -dTtracerLev(k)
+     &         *recip_drF( k ) * recip_hFacC(i,j,k,bi,bj)
+     &         *.5 _d 0*(KappaE(i,j,k)+KappaE(i,j,kp1))
+     &         *recip_drC(k)*maskC(i,j,k-1,bi,bj)
+     &         *coordFac*coordFac
         ENDDO
        ENDDO
       ENDDO
@@ -708,12 +806,21 @@ C-    No need for maskC(k) with recip_hFacC(k)
 
       IF (.NOT.GGL90_dirichlet) THEN
 C      Neumann bottom boundary condition for TKE: no flux from bottom
-       DO j=jMin,jMax
-        DO i=iMin,iMax
-         kBottom   = MAX(kLowC(i,j,bi,bj),1)
-         c3d(i,j,kBottom) = 0. _d 0
+       IF ( usingPCoords ) THEN
+        DO j=jMin,jMax
+         DO i=iMin,iMax
+          kBottom=MIN(MAX(kSurfC(i,j,bi,bj)+1,2),Nr)
+          a3d(i,j,kBottom) = 0. _d 0
+         ENDDO
         ENDDO
-       ENDDO
+       ELSE
+        DO j=jMin,jMax
+         DO i=iMin,iMax
+          kBottom   = MAX(kLowC(i,j,bi,bj),1)
+          c3d(i,j,kBottom) = 0. _d 0
+         ENDDO
+        ENDDO
+       ENDIF
       ENDIF
 
 C--   Center diagonal
@@ -722,44 +829,79 @@ C--   Center diagonal
        DO j=jMin,jMax
         DO i=iMin,iMax
          b3d(i,j,k) = 1. _d 0 - c3d(i,j,k) - a3d(i,j,k)
-     &        + implDissFac*deltaTggl90*GGL90ceps*SQRTTKE(i,j,k)
+     &        + implDissFac*dTtracerLev(k)*GGL90ceps*SQRTTKE(i,j,k)
      &        * rMixingLength(i,j,k)
      &        * maskC(i,j,k,bi,bj)*maskC(i,j,km1,bi,bj)
         ENDDO
        ENDDO
       ENDDO
+      IF ( usingPCoords ) THEN
+C     impose TKE(1) = 0.
+       DO j=jMin,jMax
+        DO i=iMin,iMax
+         b3d(i,j,1) = 1. _d 0
+        ENDDO
+       ENDDO
+      ENDIF
 C     end set up matrix
+C
 
 C     Apply boundary condition
-      kp1 = MIN(Nr,kSurf+1)
       DO j=jMin,jMax
        DO i=iMin,iMax
 C     estimate friction velocity uStar from surface forcing
-        uStarSquare = SQRT(
+        uStarSquare(i,j) = SQRT(
      &    ( .5 _d 0*( surfaceForcingU(i,  j,  bi,bj)
      &              + surfaceForcingU(i+1,j,  bi,bj) ) )**2
      &  + ( .5 _d 0*( surfaceForcingV(i,  j,  bi,bj)
      &              + surfaceForcingV(i,  j+1,bi,bj) ) )**2
-     &                     )
-C     Dirichlet surface boundary condition for TKE
-        GGL90TKE(i,j,kSurf,bi,bj) = maskC(i,j,kSurf,bi,bj)
-     &           *MAX(GGL90TKEsurfMin,GGL90m2*uStarSquare)
-        GGL90TKE(i,j,kp1,bi,bj) = GGL90TKE(i,j,kp1,bi,bj)
-     &               - a3d(i,j,kp1)*GGL90TKE(i,j,kSurf,bi,bj)
-        a3d(i,j,kp1) = 0. _d 0
+     &                     )*recip_coordFac
        ENDDO
       ENDDO
+C     Dirichlet surface boundary condition for TKE
+      IF ( usingPCoords ) THEN
+       DO j=jMin,jMax
+        DO i=iMin,iMax
+         GGL90TKE(i,j,kSrf,bi,bj) = GGL90TKE(i,j,kSrf,bi,bj)
+     &        - c3d(i,j,kSrf) * maskC(i,j,kSrf,bi,bj)
+     &        *MAX(GGL90TKEsurfMin,GGL90m2*uStarSquare(i,j))
+         c3d(i,j,kSrf) = 0. _d 0
+        ENDDO
+       ENDDO
+      ELSE
+       kp1 = MIN(Nr,2)
+       DO j=jMin,jMax
+        DO i=iMin,iMax
+         GGL90TKE(i,j,kSrf,bi,bj) = maskC(i,j,kSrf,bi,bj)
+     &        *MAX(GGL90TKEsurfMin,GGL90m2*uStarSquare(i,j))
+         GGL90TKE(i,j,kp1,bi,bj) = GGL90TKE(i,j,kp1,bi,bj)
+     &        - a3d(i,j,kp1)*GGL90TKE(i,j,kSrf,bi,bj)
+         a3d(i,j,kp1) = 0. _d 0
+        ENDDO
+       ENDDO
+      ENDIF
 
       IF (GGL90_dirichlet) THEN
 C      Dirichlet bottom boundary condition for TKE = GGL90TKEbottom
-       DO j=jMin,jMax
-        DO i=iMin,iMax
-         kBottom   = MAX(kLowC(i,j,bi,bj),1)
-         GGL90TKE(i,j,kBottom,bi,bj) = GGL90TKE(i,j,kBottom,bi,bj)
-     &                              - GGL90TKEbottom*c3d(i,j,kBottom)
-         c3d(i,j,kBottom) = 0. _d 0
+       IF ( usingPCoords ) THEN
+        DO j=jMin,jMax
+         DO i=iMin,iMax
+          kBottom=MIN(MAX(kSurfC(i,j,bi,bj)+1,2),Nr)
+          GGL90TKE(i,j,kBottom,bi,bj) = GGL90TKE(i,j,kBottom,bi,bj)
+     &                                - GGL90TKEbottom*a3d(i,j,kBottom)
+          a3d(i,j,kBottom) = 0. _d 0
+         ENDDO
         ENDDO
-       ENDDO
+       ELSE
+        DO j=jMin,jMax
+         DO i=iMin,iMax
+          kBottom   = MAX(kLowC(i,j,bi,bj),1)
+          GGL90TKE(i,j,kBottom,bi,bj) = GGL90TKE(i,j,kBottom,bi,bj)
+     &                                - GGL90TKEbottom*c3d(i,j,kBottom)
+          c3d(i,j,kBottom) = 0. _d 0
+         ENDDO
+        ENDDO
+       ENDIF
       ENDIF
 
 #ifdef ALLOW_AUTODIFF_TAMC
@@ -776,11 +918,13 @@ C     solve tri-diagonal system
 #ifdef ALLOW_AUTODIFF_TAMC
 CADJ STORE GGL90TKE(:,:,:,bi,bj)=comlev1_bibj, key=ikeyLoc, kind=isbyte
 #endif
-      DO k=1,Nr
+      DO k=2,Nr
        DO j=jMin,jMax
         DO i=iMin,iMax
-C     impose minimum TKE to avoid numerical undershoots below zero
-         GGL90TKE(i,j,k,bi,bj) = maskC(i,j,k,bi,bj)
+C     impose minimum TKE to avoid numerical undershoots below zero;
+C     level k=1 is either prescribed surface boundary condition (z-coords) or
+C     bottom boundary conditions, which by definition is zero
+         GGL90TKE(i,j,k,bi,bj) = maskC(i,j,k,bi,bj)*maskC(i,j,k-1,bi,bj)
      &                  *MAX( GGL90TKE(i,j,k,bi,bj), GGL90TKEmin )
         ENDDO
        ENDDO
@@ -818,6 +962,7 @@ C     ===============================
          tmpVisc = GGL90visctmp(i,j,k)
 #endif
          tmpVisc = MIN(tmpVisc/TKEPrandtlNumber(i,j,k),GGL90diffMax)
+     &        * coordFac*coordFac
          GGL90diffKr(i,j,k,bi,bj)= MAX( tmpVisc , diffKrNrS(k) )
         ENDDO
        ENDDO
@@ -848,6 +993,7 @@ C     ===============================
      &           + GGL90visctmp(i,j,k) )
 #endif
          tmpVisc = MIN( tmpVisc , GGL90viscMax )
+     &        * coordFac*coordFac
          GGL90viscArU(i,j,k,bi,bj) = MAX( tmpVisc, viscArNr(k) )
         ENDDO
        ENDDO
@@ -878,6 +1024,7 @@ C     ===============================
      &           + GGL90visctmp(i,j,k) )
 #endif
          tmpVisc = MIN( tmpVisc , GGL90viscMax )
+     &        * coordFac*coordFac
          GGL90viscArV(i,j,k,bi,bj) = MAX( tmpVisc, viscArNr(k) )
         ENDDO
        ENDDO
@@ -898,20 +1045,34 @@ C     ===============================
         CALL DIAGNOSTICS_FILL( GGL90mixingLength,'GGL90Lmx',
      &                         0,Nr, 2, bi, bj, myThid )
 
-        kp1 = MIN(Nr,kSurf+1)
-        DO j=jMin,jMax
-         DO i=iMin,iMax
 C     diagnose surface flux of TKE
-          surf_flx_tke(i,j) =(GGL90TKE(i,j,kSurf,bi,bj)-
-     &                        GGL90TKE(i,j,kp1,bi,bj))
-     &        *recip_drF(kSurf)*recip_hFacC(i,j,kSurf,bi,bj)
-     &        *KappaE(i,j,kp1)
+        IF ( usingPCoords ) THEN
+C     diagnose surface flux of TKE
+         DO j=jMin,jMax
+          DO i=iMin,iMax
+           surf_flx_tke(i,j) =
+     &          (MAX(GGL90TKEsurfMin,GGL90m2*uStarSquare(i,j))
+     &          - GGL90TKE(i,j,kSrf,bi,bj) )
+     &          *recip_drF(kSrf)*recip_hFacC(i,j,kSrf,bi,bj)
+     &          *KappaE(i,j,kSrf)
+     &          *coordFac
+          ENDDO
          ENDDO
-        ENDDO
+        ELSE
+         kp1 = MIN(Nr,kSrf+1)
+         DO j=jMin,jMax
+          DO i=iMin,iMax
+           surf_flx_tke(i,j) =(GGL90TKE(i,j,kSrf,bi,bj)-
+     &                         GGL90TKE(i,j,kp1,bi,bj))
+     &         *recip_drF(kSrf)*recip_hFacC(i,j,kSrf,bi,bj)
+     &         *KappaE(i,j,kp1)
+          ENDDO
+         ENDDO
+        ENDIF
         CALL DIAGNOSTICS_FILL( surf_flx_tke,'GGL90flx',
      &                         0, 1, 2, bi, bj, myThid )
 
-        k=kSurf
+        k=kSrf
         DO j=jMin,jMax
          DO i=iMin,iMax
 C     diagnose work done by the wind
@@ -920,6 +1081,7 @@ C     diagnose work done by the wind
      &              +surfaceForcingU(i+1,j,bi,bj)*uVel(i+1,j,k,bi,bj))
      &    + halfRL*( surfaceForcingV(i,j,  bi,bj)*vVel(i,j  ,k,bi,bj)
      &              +surfaceForcingV(i,j+1,bi,bj)*vVel(i,j+1,k,bi,bj))
+          surf_flx_tke(i,j) = surf_flx_tke(i,j) *recip_coordFac
          ENDDO
         ENDDO
         CALL DIAGNOSTICS_FILL( surf_flx_tke,'GGL90tau',
