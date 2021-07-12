@@ -3,6 +3,9 @@
 #ifdef ALLOW_AUTODIFF
 # include "AUTODIFF_OPTIONS.h"
 #endif
+#ifdef ALLOW_CTRL
+# include "CTRL_OPTIONS.h"
+#endif
 
 CML THIS DOES NOT WORK +++++
 #undef ALLOW_LOOP_DIRECTIVE
@@ -190,12 +193,12 @@ CADJ STORE cg2d_x = comlev1_cg2d, key = ikey, byte = isbyte
         sumRHStile(bi,bj) = 0. _d 0
         DO j=0,sNy+1
          DO i=0,sNx+1
-          cg2d_s(i,j,bi,bj) = 0.
+          cg2d_sf(i,j,bi,bj) = 0.
          ENDDO
         ENDDO
         DO j=1,sNy
          DO i=1,sNx
-          cg2d_r(i,j,bi,bj) = cg2d_b(i,j,bi,bj) -
+          cg2d_rf(i,j,bi,bj) = cg2d_b(i,j,bi,bj) -
      &    (aW2d(i  ,j  ,bi,bj)*cg2d_x(i-1,j  ,bi,bj)
      &    +aW2d(i+1,j  ,bi,bj)*cg2d_x(i+1,j  ,bi,bj)
      &    +aS2d(i  ,j  ,bi,bj)*cg2d_x(i  ,j-1,bi,bj)
@@ -203,7 +206,7 @@ CADJ STORE cg2d_x = comlev1_cg2d, key = ikey, byte = isbyte
      &    +aC2d(i  ,j  ,bi,bj)*cg2d_x(i  ,j  ,bi,bj)
      &    )
           errTile(bi,bj)    = errTile(bi,bj)
-     &                      + cg2d_r(i,j,bi,bj)*cg2d_r(i,j,bi,bj)
+     &                      + cg2d_rf(i,j,bi,bj)*cg2d_rf(i,j,bi,bj)
           sumRHStile(bi,bj) = sumRHStile(bi,bj) + cg2d_b(i,j,bi,bj)
          ENDDO
         ENDDO
@@ -211,7 +214,7 @@ CADJ STORE cg2d_x = comlev1_cg2d, key = ikey, byte = isbyte
       ENDDO
 
 c     CALL EXCH_S3D_RL( cg2d_r, 1, myThid )
-      CALL EXCH_XY_RL ( cg2d_r, myThid )
+      CALL EXCH_XY_RL ( cg2d_rf, myThid )
       CALL GLOBAL_SUM_TILE_RL( errTile,    err_sq, myThid )
       CALL GLOBAL_SUM_TILE_RL( sumRHStile, sumRHS, myThid )
       actualIts = 0
@@ -226,7 +229,7 @@ c     CALL EXCH_S3D_RL( cg2d_r, 1, myThid )
         _BEGIN_MASTER( myThid )
         printResidual = printResidualFreq.GE.1
         WRITE(standardmessageunit,'(A,1P2E22.14)')
-     &  ' cg2d: Sum(rhs),rhsMax = ', sumRHS,rhsMax
+     &  ' cg2d_nsa: Sum(rhs),rhsMax = ', sumRHS,rhsMax
         _END_MASTER( myThid )
       ENDIF
 
@@ -246,13 +249,14 @@ CML      it2d = it2d+1
        icg2dkey = (ikey-1)*numItersMax + it2d
 CADJ STORE err_sq = comlev1_cg2d_iter, key = icg2dkey, byte = isbyte
 #endif /* ALLOW_AUTODIFF_TAMC */
-      IF ( err_sq .GE. cg2dTolerance_sq ) THEN
+       IF ( it2d .LE. cg2dMinItersNSA .OR.
+     &      err_sq .GE. cg2dTolerance_sq ) THEN
 
 C--    Solve preconditioning equation and update
 C--    conjugate direction vector "s".
 #ifdef ALLOW_AUTODIFF_TAMC
-CADJ STORE cg2d_r = comlev1_cg2d_iter, key = icg2dkey, byte = isbyte
-CADJ STORE cg2d_s = comlev1_cg2d_iter, key = icg2dkey, byte = isbyte
+CADJ STORE cg2d_rf = comlev1_cg2d_iter, key = icg2dkey, byte = isbyte
+CADJ STORE cg2d_sf = comlev1_cg2d_iter, key = icg2dkey, byte = isbyte
 #endif /* ALLOW_AUTODIFF_TAMC */
        DO bj=myByLo(myThid),myByHi(myThid)
         DO bi=myBxLo(myThid),myBxHi(myThid)
@@ -260,13 +264,13 @@ CADJ STORE cg2d_s = comlev1_cg2d_iter, key = icg2dkey, byte = isbyte
          DO j=1,sNy
           DO i=1,sNx
            cg2d_z(i,j,bi,bj) =
-     &      pC(i  ,j  ,bi,bj)*cg2d_r(i  ,j  ,bi,bj)
-     &     +pW(i  ,j  ,bi,bj)*cg2d_r(i-1,j  ,bi,bj)
-     &     +pW(i+1,j  ,bi,bj)*cg2d_r(i+1,j  ,bi,bj)
-     &     +pS(i  ,j  ,bi,bj)*cg2d_r(i  ,j-1,bi,bj)
-     &     +pS(i  ,j+1,bi,bj)*cg2d_r(i  ,j+1,bi,bj)
+     &      pC(i  ,j  ,bi,bj)*cg2d_rf(i  ,j  ,bi,bj)
+     &     +pW(i  ,j  ,bi,bj)*cg2d_rf(i-1,j  ,bi,bj)
+     &     +pW(i+1,j  ,bi,bj)*cg2d_rf(i+1,j  ,bi,bj)
+     &     +pS(i  ,j  ,bi,bj)*cg2d_rf(i  ,j-1,bi,bj)
+     &     +pS(i  ,j+1,bi,bj)*cg2d_rf(i  ,j+1,bi,bj)
            eta_qrNtile(bi,bj) = eta_qrNtile(bi,bj)
-     &     +cg2d_z(i,j,bi,bj)*cg2d_r(i,j,bi,bj)
+     &     +cg2d_z(i,j,bi,bj)*cg2d_rf(i,j,bi,bj)
           ENDDO
          ENDDO
         ENDDO
@@ -282,14 +286,15 @@ CML       cgBeta   = eta_qrN/eta_qrNM1
 Cml    store normalisation factor for the next interation (in case there is one).
 CML    store the inverse of the normalization factor for higher precision
 CML       eta_qrNM1 = eta_qrN
-       recip_eta_qrNM1 = 1. _d 0/eta_qrN
+       recip_eta_qrNM1 = 0. _d 0
+       IF ( eta_qrN .NE. 0. _d 0 ) recip_eta_qrNM1 = 1. _d 0/eta_qrN
 
        DO bj=myByLo(myThid),myByHi(myThid)
         DO bi=myBxLo(myThid),myBxHi(myThid)
          DO j=1,sNy
           DO i=1,sNx
-           cg2d_s(i,j,bi,bj) = cg2d_z(i,j,bi,bj)
-     &                       + cgBeta*cg2d_s(i,j,bi,bj)
+           cg2d_sf(i,j,bi,bj) = cg2d_z(i,j,bi,bj)
+     &                       + cgBeta*cg2d_sf(i,j,bi,bj)
           ENDDO
          ENDDO
         ENDDO
@@ -298,13 +303,13 @@ CML       eta_qrNM1 = eta_qrN
 C--    Do exchanges that require messages i.e. between
 C--    processes.
 c      CALL EXCH_S3D_RL( cg2d_s, 1, myThid )
-       CALL EXCH_XY_RL ( cg2d_s, myThid )
+       CALL EXCH_XY_RL ( cg2d_sf, myThid )
 
 C==    Evaluate laplace operator on conjugate gradient vector
 C==    q = A.s
 #ifdef ALLOW_AUTODIFF_TAMC
 #ifndef ALLOW_LOOP_DIRECTIVE
-CADJ STORE cg2d_s = comlev1_cg2d_iter, key = icg2dkey, byte = isbyte
+CADJ STORE cg2d_sf = comlev1_cg2d_iter, key = icg2dkey, byte = isbyte
 #endif /* not ALLOW_LOOP_DIRECTIVE */
 #endif /* ALLOW_AUTODIFF_TAMC */
        DO bj=myByLo(myThid),myByHi(myThid)
@@ -313,25 +318,26 @@ CADJ STORE cg2d_s = comlev1_cg2d_iter, key = icg2dkey, byte = isbyte
          DO j=1,sNy
           DO i=1,sNx
            cg2d_q(i,j,bi,bj) =
-     &     aW2d(i  ,j  ,bi,bj)*cg2d_s(i-1,j  ,bi,bj)
-     &    +aW2d(i+1,j  ,bi,bj)*cg2d_s(i+1,j  ,bi,bj)
-     &    +aS2d(i  ,j  ,bi,bj)*cg2d_s(i  ,j-1,bi,bj)
-     &    +aS2d(i  ,j+1,bi,bj)*cg2d_s(i  ,j+1,bi,bj)
-     &    +aC2d(i  ,j  ,bi,bj)*cg2d_s(i  ,j  ,bi,bj)
+     &     aW2d(i  ,j  ,bi,bj)*cg2d_sf(i-1,j  ,bi,bj)
+     &    +aW2d(i+1,j  ,bi,bj)*cg2d_sf(i+1,j  ,bi,bj)
+     &    +aS2d(i  ,j  ,bi,bj)*cg2d_sf(i  ,j-1,bi,bj)
+     &    +aS2d(i  ,j+1,bi,bj)*cg2d_sf(i  ,j+1,bi,bj)
+     &    +aC2d(i  ,j  ,bi,bj)*cg2d_sf(i  ,j  ,bi,bj)
            alphaTile(bi,bj) = alphaTile(bi,bj)
-     &                      + cg2d_s(i,j,bi,bj)*cg2d_q(i,j,bi,bj)
+     &                      + cg2d_sf(i,j,bi,bj)*cg2d_q(i,j,bi,bj)
           ENDDO
          ENDDO
         ENDDO
        ENDDO
        CALL GLOBAL_SUM_TILE_RL( alphaTile, alphaSum, myThid )
-       alpha = eta_qrN/alphaSum
+       alpha = 0. _d 0
+       IF ( alphaSum .NE. 0 _d 0 ) alpha = eta_qrN/alphaSum
 
 C==    Update simultaneously solution and residual vectors (and Iter number)
 C      Now compute "interior" points.
 #ifdef ALLOW_AUTODIFF_TAMC
 #ifndef ALLOW_LOOP_DIRECTIVE
-CADJ STORE cg2d_r = comlev1_cg2d_iter, key = icg2dkey, byte = isbyte
+CADJ STORE cg2d_rf = comlev1_cg2d_iter, key = icg2dkey, byte = isbyte
 #endif /* ALLOW_LOOP_DIRECTIVE */
 #endif /* ALLOW_AUTODIFF_TAMC */
        DO bj=myByLo(myThid),myByHi(myThid)
@@ -339,10 +345,10 @@ CADJ STORE cg2d_r = comlev1_cg2d_iter, key = icg2dkey, byte = isbyte
          errTile(bi,bj) = 0. _d 0
          DO j=1,sNy
           DO i=1,sNx
-           cg2d_x(i,j,bi,bj)=cg2d_x(i,j,bi,bj)+alpha*cg2d_s(i,j,bi,bj)
-           cg2d_r(i,j,bi,bj)=cg2d_r(i,j,bi,bj)-alpha*cg2d_q(i,j,bi,bj)
+           cg2d_x(i,j,bi,bj)=cg2d_x(i,j,bi,bj)+alpha*cg2d_sf(i,j,bi,bj)
+           cg2d_rf(i,j,bi,bj)=cg2d_rf(i,j,bi,bj)-alpha*cg2d_q(i,j,bi,bj)
            errTile(bi,bj) = errTile(bi,bj)
-     &                    + cg2d_r(i,j,bi,bj)*cg2d_r(i,j,bi,bj)
+     &                    + cg2d_rf(i,j,bi,bj)*cg2d_rf(i,j,bi,bj)
           ENDDO
          ENDDO
         ENDDO
@@ -353,14 +359,14 @@ CADJ STORE cg2d_r = comlev1_cg2d_iter, key = icg2dkey, byte = isbyte
        IF ( printResidual ) THEN
         IF ( MOD( it2d-1, printResidualFreq ).EQ.0 ) THEN
          WRITE(msgBuf,'(A,I6,A,1PE21.14)')
-     &    ' cg2d: iter=', it2d, ' ; resid.= ', SQRT(err_sq)
+     &    ' cg2d_nsa: iter=', it2d, ' ; resid.= ', SQRT(err_sq)
          CALL PRINT_MESSAGE( msgBuf, standardMessageUnit,
      &                       SQUEEZE_RIGHT, myThid )
         ENDIF
        ENDIF
 
 c      CALL EXCH_S3D_RL( cg2d_r, 1, myThid )
-       CALL EXCH_XY_RL ( cg2d_r, myThid )
+       CALL EXCH_XY_RL ( cg2d_rf, myThid )
 
 Cml   end of if "err >= cg2dTolerance" block ; end main solver loop
       ENDIF
